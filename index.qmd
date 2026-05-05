@@ -1,86 +1,1231 @@
 ---
-title: "Tutorial template"
+title: "Using {marginaleffects}"
 author: 
-  - name: "Robin Doe"
-    url: "http://www.example.com"
+  - name: "Josef Fruehwald"
+    url: "https://jofrhwld.github.io"
     affiliations:
-      - University of State
-date: 2025-9-1
+      - University of Kentucky
+date: 2026-05-04
 license: "CC-BY-SA 4.0"
+resource-path: 
+  - data
+  - models
 format: 
-  html: default
-  pdf: default
+  html:
+    code-link: true
+  #typst: default
 editor: visual
+fig-width: 5
+fig-height: 3
 knitr: 
   opts_chunk: 
     echo: true
     message: false
+bibliography: references.bib
 ---
 
-This is intended to be a tutoral template for the [Linguistics Methods Hub](https://lingmethodshub.github.io/). You can fork and rename this repository, then proceed to delete and rename files as works best for your needs
+::: {.callout-note .column-margin}
+## Tutorial data
 
-Template repository url: <https://github.com/LingMethodsHub/template>
+[data/um_data.csv](data/um_data.csv) (4.7Mb)
+:::
 
-## Authoring
+The purpose of this tutorial is to introduce use of the `{marginaleffects}` package using linguistic data.
+The use of linguistic data is the distinctive aspect of this tutorial, which otherwise partially replicates the tutorials available by the author `{marginaleffects}` and collaborators [@arel-bundock2024; @arel-bundock2025; @arel-bundock2026].
+I highly recommend referring to these materials as well, especially the book and reference manual at [https://marginaleffects.com](https://marginaleffects.com/).
 
-### Writing `.md`, `.rmd` files
+While the use of `{marginaleffects}` is often discussed within the framework of Causal Inference, it is very useful for extracting predictions and comparisons from statistical models even if you're not operating within that framework.
+This tutorial will use `{brms}` to fit the model, but the incredible utility of `{marginaleffects}` is its support for an enormous range of models ([123 at time of writing](https://marginaleffects.com/bonus/supported_models.html)) from a broad range of packages using a common interface.
+So, even if you're modeling using `{lme4}` or base `stats::lm()` or `stats::glm()`, you should be able to make use of the functions covered in this tutorial with minimal adjustment.
 
-All markdown, rmarkdown and quarto files will be rendered (except for any named `README*`), and can be written in your preferred way.
+```{r}
+# Setup
+library(tidyverse)
+library(brms)
+library(ggdist)
+library(marginaleffects)
+library(faux)
+library(tinytable)
 
-[rmd output](00_rmarkdown_template.rmd)
+theme_set(
+  theme_ggdist() +
+  theme(
+    palette.colour.discrete = khroma::color(palette = "bright")
+  )
+)
 
-### Writing `.qmd` files
-
-You can write quarto documents exactly like rmarkdown files.
-
-[qmd output](01_qmd_template.qmd)
-
-### Jupyter
-
-You can also write tutorials in a jupyter notebook, and they will be rendered into the same output.
-
-[jupyter output](02_jupyter.ipynb)
-
-## Header information
-
-### Author information
-
-The author yaml information for this page is
-
-``` yaml
-author: 
-  - name: "Robin Doe"
-    url: "http://www.example.com"
-    affiliations:
-      - University of State
+options(
+  tinytable_tt_digits = 3,
+  marginaleffects_lean = TRUE,
+  marginaleffects_posterior_center = "mean"  
+)
+set.seed(2026)
 ```
 
-The full author schema, from the [quarto docs](https://quarto.org/docs/journals/authors.html), is
+# Introduction: Filled Pause Data
 
-``` yaml
-author:
-  - id: string
-    number: number
-    name:
-      given: string
-      family: string
-      literal: string
-      dropping-particle: string
-      non-dropping-particle: string
-    url: string
-    email: string
-    fax: string
-    orcid: string
-    note: string
-    acknowledgements: string
-    attributes:
-      corresponding: boolean
-      equal-contributor: boolean
-      deceased: boolean
-    metadata: object
-    affiliations: 
+We'll be modelling the use of Filled Pauses ("um" and "uh") drawn from the Philadelphia Neighborhood Corpus (filled pause background: @clark2002; @wieling2016; @fruehwald2016).
+
+```{r}
+um = read_csv("data/um_data.csv")
 ```
 
-### Format
+```{r}
+#| label: tbl-data
+#| code-fold: true
+#| code-summary: Table code
+#| tbl-cap: |
+#|   6 randomly sampled rows
+um |>
+ slice_sample(
+   by = label,
+   n = 3
+ ) |>
+ tt() |>
+ tt_format(
+   num_mark_big = ""
+ ) |>
+ tt_format(
+   j = c(7,9:10, 12, 15),
+   num_fmt = "decimal",
+   digits = 2
+ ) |>
+ tt_style(
+   fontsize = 0.6
+ )
+```
 
-If you include both information for both `html` and `pdf` output formats, they will both be generated, allowing a standalone pdf for printing etc: [pdf output](index.pdf).
+Every row corresponds to either an "um" or an "un".
+The data columns that may not be obvious from the names are:
+
+-   `local_*`: quantities estimated based on a 1 second window around each filled pause
+
+    -   `*_speaking`: total duration of words spoken
+
+    -   `*_syls`: The number of syllables spoken
+
+    -   `*_rate`: The number of syllables divided by the speaking time.
+
+-   `total_*`: Quantities estimated based on the speaker's entire interview.
+
+    -   `*_speaking`, `*_syls`, `*_rate`: same as for the local quantities
+
+-   `prev_speaker`: If 0, the previous speaker in the recording was the the same as the focal speaker.
+    If any other number, it was a different speaker.
+
+-   `fol_seg`: The phone following the filled pause.
+    `sp` is a pause, and every other value is a CMU-style label.
+
+-   `fol_dur`: The duration of the following phone.
+
+## Descriptive stats
+
+@clark2002 argue that filled pauses are useful signals to a listener that a speaker is working harder for lexical access, and that "um" is a signal of greater effort than "um".
+As such, other indicators of greater effort in lexical access should be predictive of "um" usage, such as whether or not there is a silent pause following, and slowdowns in local speech rate.
+
+@fig-rate plots "um" usage against the relative speech rate (how much faster/slower the local speech rate around the filled pause is relative to the speaker's overall speech rate) and whether or not the following segment was a silent pause.
+It appears to hold true that a following silent pause is predictive of higher "um" usage, and so is a slower relative speech rate.
+
+```{r}
+#| label: fig-rate
+#| code-fold: true
+#| code-summary: Plotting code
+#| fig-cap: |
+#|   The relationship between relative speech rate and silent pause 
+#|   on "um" usage.
+um |>
+ mutate(
+   um = (label == "UM") * 1,
+   fol_pause = fol_seg == "sp"
+ ) |>
+ ggplot(
+   aes(local_rate/total_rate, um, color = fol_pause)
+ ) +
+ geom_dots(
+   aes(
+     side = label,
+     order = fol_pause
+   ),
+   height = 0.5,
+   group = NA,
+   alpha = 0.1
+ ) +
+ stat_smooth(
+   method = glm,
+   method.args = list(
+     family = binomial
+   )
+ ) +
+ scale_side_mirrored(
+   guide = "none"
+ ) +
+ scale_x_log10() +
+ scale_y_continuous(
+   expand = expansion(0)
+ ) +
+ coord_cartesian(
+   y = c(0,1)
+ ) +
+ theme_sub_legend(
+   position = "inside",
+   position.inside = c(0.9,0.5)
+ )
+```
+
+@wieling2016 and @fruehwald2016 also found that there appears to be a language change in progress, with speakers shifting towards higher "um" usage.
+As with most language changes in progress, women are in the lead.
+@fig-gender plots these relationships in the data.
+
+```{r}
+#| label: fig-gender
+#| code-fold: true
+#| code-summary: Plotting code
+#| fig-cap: |
+#|   The relationship between date of birth and gender
+#|   on "um" usage.
+um |>
+ mutate(
+   um = (label == "UM") * 1,
+ ) |>
+ ggplot(
+   aes(dob, um, color = gender)
+ ) +
+ geom_dots(
+   aes(
+     side = label,
+     order = gender
+   ),
+   height = 0.5,
+   group = NA,
+   alpha = 0.1
+ ) +
+ stat_smooth(
+   method = glm,
+   method.args = list(
+     family = binomial
+   )
+ ) +
+ scale_side_mirrored(
+   guide = "none"
+ ) +
+ scale_x_log10() +
+ scale_y_continuous(
+   expand = expansion(0)
+ ) +
+ coord_cartesian(
+   y = c(0,1)
+ ) +
+ theme_sub_legend(
+   position = "inside",
+   position.inside = c(0.9,0.2)
+ )
+```
+
+## Preparing the data
+
+For modeling, I'll fit a logistic regression predicting "um" (vs "uh") usage.
+I'll calculate some derived predictors, specifically the relative speech rate, and categorical predictor encoding whether the following sound was a silent pause, a vowel, or a consonant.
+I'll also use sum contrasts for all of the predictors.
+
+```{r}
+um |>
+  mutate(
+    um = (label == "UM")*1,
+    relative_rate = local_rate/total_rate,
+    fol_class = case_when(
+      fol_seg == "sp" ~ "pause",
+      str_detect(fol_seg, "[AEIOU]") ~ "vowel",
+      .default = "consonant"
+    ) |> contr_code_sum(),
+    gender = contr_code_sum(gender)
+  ) ->
+  to_mod
+```
+
+To aid with model fitting, I'll need some summary statistics for the between-speaker variables.
+
+```{r}
+um |>
+  slice(
+    .by = speaker, 1
+  ) |>
+  summarise(
+    across(
+      c(dob, starts_with("total")),
+      mean
+    )
+  )
+```
+
+# Fitting the model
+
+For fitting the model, I want to take into account the fact that
+
+-   "um" usage is shifting over DOB, possibly at different rates for men and women.
+
+-   The rate of speech and following pause effects may change as the overall rate of "um" usage increases.
+
+-   Speakers who are already fast speakers might not have as strong a relative speech rate effect.
+
+Taking all of these things into account results in this monstrous model formula.
+I'm centering and log transforming the predictors inside the model formula, because this will eventually play nicer with the `{marginaleffects}` functions.
+
+```{r}
+model_formula <- bf(
+  um ~ I(dob-1943) * gender * fol_class *
+  I(log(total_rate/5.3)) *
+  I(log(relative_rate)) +
+  (log2(relative_rate) + fol_class | speaker)
+)
+```
+
+In case you missed it, that's a **five way** interaction.
+Now we'll fit it using brms and default priors.
+
+```{r}
+um_model <- brm(
+  model_formula,
+  family = bernoulli(),
+  data = to_mod,
+  backend = "cmdstanr",
+  cores = 4,
+  file = "models/um_model"
+)
+```
+
+This model results in *48* fixed effects estimates, and because they're all involved in interactions, none of them can be straightforwardly interpreted.
+
+```{r}
+#| label: tbl-fixef
+#| tbl-cap: |
+#|   Fixed effects estimates
+#| code-fold: true
+#| code-summary: Table code
+fixef(um_model) |>
+ as_tibble(rownames = "term") ->
+ fixef_df
+
+reliable <- function(lo, hi){
+  sign(lo) == sign(hi)
+}
+
+fixef_df |>
+ mutate(
+   dob = case_when(
+     str_detect(term, "dob") ~ "dob"
+   ),
+   gender = case_when(
+     str_detect(term, "gender") ~ "man"
+   ),
+   fol_class = case_when(
+     str_detect(term, "fol_class") ~ str_extract(
+       term, "fol_class.([a-z]+)M", group = 1
+     )
+   ),
+   total_rate = case_when(
+     str_detect(term, "total_rate") ~ "total_rate"
+   ),
+   rel_rate = case_when(
+     str_detect(term, "relative_rate") ~ "rel_rate"
+   )
+ ) |>
+ relocate(
+   dob:last_col(),
+   .before = term
+ ) |>
+ select(-term) |>
+ slice(-1) ->
+ param_df
+
+param_df |>
+ tt() |>
+ tt_format(
+   replace = TRUE
+ ) |>
+ tt_format(
+   j = 6:9,
+   digits = 3,
+   num_fmt = "decimal"
+ ) |>
+ tt_style(
+   i = 1:nrow(param_df),
+   bold = reliable(
+     param_df$Q2.5, param_df$Q97.5
+   )
+ ) |>
+ theme_html(
+   engine = "tabulator",
+   tabulator_pagination = c(10, 25, 50)
+ )
+```
+
+# From model to meaning
+
+## Getting predictions
+
+We can get the probability of "um" the model assigns to each token with `marginaleffects::predictions()`.
+Without passing any other arguments, it will give us back predictions for the original data.
+
+```{r}
+predictions(
+  um_model
+) ->
+ all_pred
+```
+
+```{r}
+#| label: tbl-pred
+#| tbl-cap: |
+#|   Sampled rows from the item level predictions.
+#| code-fold: true
+#| code-summary: Table code
+all_pred|>
+ slice_sample(
+   by = label,
+   n = 3
+ ) |>
+ tt() |>
+ tt_style(
+   fontsize = 0.6
+ )
+```
+
+### Average predictions
+
+One thing we could ask is what the average prediction for, say, the `fol_class` variable is.
+To get that, we can do some tidyverse summarizing on `all_pred`.
+This is also called "marginalizing" over all of the other predictors.
+
+```{r}
+#| label: tbl-avg1
+#| tbl-cap: |
+#|   Predictions averaged over `fol_class`
+
+all_pred |>
+ summarise(
+   .by = fol_class,
+   estimate = mean(estimate)
+ ) |>
+ arrange(desc(estimate)) |>
+ tt()
+```
+
+The `marginaleffects::avg_predictions()` does this kind of marginalization in one step.
+
+```{r}
+#| label: tbl-avg2
+#| tbl-cap: |
+#|   Predictions averaged over `fol_class`
+
+avg_predictions(
+  um_model,
+  by = "fol_class"
+) |>
+ arrange(desc(estimate)) |>
+ tt()
+```
+
+### Prediction type
+
+By default, predictions (and average predictions) are made on the "response" scale.
+For this logistic regression, that means these are probabilities.
+Here's the same average probability by gender.
+
+```{r}
+#| label: tbl-avg-gender
+#| tbl-cap: |
+#|   Predictions averaged over `gender`
+
+avg_predictions(
+  um_model,
+  by = "gender"
+) |>
+ tt()
+```
+
+For some purposes, we'll want to work with predictions on the "link" scale, which for logistic regression will be in log-odds.
+
+```{r}
+#| label: tbl-avg-logit
+#| tbl-cap: |
+#|   Predictions averaged over `gender`
+#|   in logit space.
+
+avg_predictions(
+  um_model,
+  by = "gender",
+  type = "link"
+) ->
+gender_logit
+
+gender_logit |> 
+ tt()
+```
+
+Due to the nature of probability space vs logit space, applying the inverse logit to predictions won't be identical.
+
+```{r}
+#| label: tbl-avg-invlogit
+#| tbl-cap: |
+#|   Inverse logit of the average logit 
+#|   predictions by `gender`
+
+gender_logit |> 
+ mutate(
+   across(
+     where(is.numeric),
+     plogis
+   )
+ ) |> 
+ tt()
+```
+
+A lot of the appeal of using `{marginaleffects}` is getting predictions and comparisons on the original scale of the data.
+However, since this filled-pause data has predicted probabilities ranging from so close to 0 up to the middle of the probability space, it's advisable to carry out the remaining analyses in the logit space, or at least do both and compare the results.
+
+## Getting Treatment Effects
+
+We can estimate the average effect of gender, keeping all other factors the same, by calculating the Average Treatment Effect (ATE).
+To do this, we create two copies of the original dataset: one where all `gender` has been set to `woman`, the other where it's all set to `man`.
+
+```{r}
+to_mod |>
+ mutate(
+   gender = "woman"
+ ) ->
+ faux_woman
+
+to_mod |>
+ mutate(
+   gender = "man"
+ ) ->
+ faux_man
+```
+
+Then, we can get the predicted values for these two counterfactual datasets.
+
+```{r}
+predictions(
+  um_model,
+  newdata = faux_woman,
+  type = "link"
+) ->
+ faux_woman_pred
+
+predictions(
+  um_model,
+  newdata = faux_man,
+  type = "link"
+) ->
+ faux_man_pred
+```
+
+Then, if we take the difference between the predictions and average them, we'll get the ATE.
+
+```{r}
+mean(
+  faux_woman_pred$estimate - faux_man_pred$estimate
+)
+```
+
+A way to do this more directly is to use `marginaleffects::avg_comparisons()`.
+
+```{r}
+#| label: tbl-gender-comp
+#| tbl-cap: |
+#|   Average Treatment Effect for gender
+avg_comparisons(
+  um_model,
+  variables = "gender",
+  type = "link"
+) |> 
+ tt()
+```
+
+### Thinking about these comparisons
+
+Just to make it crystal clear what's happening with these average comparisons, let's grab one row from the original data.
+
+```{r}
+to_mod |> 
+  slice(26012) |>
+  select(speaker, dob, gender, total_rate, relative_rate, fol_class) ->
+  one_row
+
+one_row |> 
+ tt()
+```
+
+When we get the predictions for this row, it's taking into account all of the parameters of the model (including the random effects!) to give us the predicted outcome.
+
+```{r}
+predictions(
+  um_model,
+  newdata = one_row,
+  type = "link"
+) |> 
+ as_tibble() ->
+ orig_pred
+
+orig_pred |>
+ tt()
+```
+
+Then, we get a counterfactual prediction grid, keeping all of the values the same except `gender`, which we swap.
+
+```{r}
+one_row |>
+  mutate(
+    gender = "man"
+  ) -> 
+  counterfactual_row
+```
+
+When we get the predicted value for *this* row, it'll be like asking "What is the predicted outcome if we kept all of the other influences of speech rate, dob, following segment, and random effects the same, but now `gender` is 'man'?"
+
+```{r}
+predictions(
+  um_model,
+  newdata = counterfactual_row,
+  type = "link"
+) |> 
+  as_tibble() ->
+  counter_pred
+```
+
+We can compare these two unit-level predictions.
+
+```{r}
+#| label: tbl-unit-comp
+#| tbl-cap: |
+#|   Comparison of unit level predictions when changing the 
+#|   value of `gender`
+#| code-fold: true
+#| code-summary: Table code
+
+avg_comparisons(
+  um_model,
+  variable = "gender",
+  newdata = one_row,
+  type = "link"
+) |>
+ as_tibble() |>
+ mutate(
+   type = "diff"
+ ) |> 
+ select(-gender) |> 
+ rename(
+   gender = contrast
+ ) ->
+ ex_comp
+
+bind_rows(
+  orig_pred,
+  counter_pred,
+) |>
+ mutate(
+   type = "pred"
+ ) |>
+ bind_rows(
+   ex_comp
+ ) |> 
+ select(
+   colnames(orig_pred),
+   type,
+   -rowid, 
+   -df
+ ) |> 
+ relocate(
+   gender,
+   .after = conf.high
+ ) |>
+ relocate(
+   type, .before = 1
+ ) |> 
+ tt() |>
+ tt_style(
+   i = 2,
+   line = "b"
+ )
+```
+
+For just this one row of data, changing `gender="man"` to `gender="woman"` (while keeping everything else the same) shifts the predicted outcome by about 2.4 logits.
+
+::: {.callout-note collapse="true"}
+## Aside
+
+`speaker` is an important grouping variable in the data, and `gender` is a between-group predictor.
+When estimating the average treatment effect of a between-group variable, we might want to use a summarized version of the original data.
+
+This code will give is the first row from each speaker for each following segment, with a fixed `relative_rate` of 1.
+The `total_rate` predictor is another between-group variable.
+
+```{r}
+to_mod |>
+ slice(
+   .by = c(speaker, fol_class),
+   1
+ ) |>
+ mutate(
+   relative_rate = 1
+ ) -> 
+ speaker_grid
+```
+
+Now we can get the average treatment effect based on this speaker grid.
+I'll further break out the effect by `fol_class`, because not every level of `fol_class` was equally frequent, so collapsing across it in this speaker grid may give us an unrepresentative estimate.
+
+```{r}
+avg_comparisons(
+  um_model,
+  variables = "gender",
+  by = "fol_class",
+  newdata = speaker_grid,
+  type = "link"
+) |> 
+ arrange(desc(estimate)) |> 
+ tt()
+```
+:::
+
+### More kinds of comparisons
+
+Looking back at the average predictions across `fol_class`, it looked like if there was a following vowel, "um" was slightly more likely than a consonant.
+We can double check if this is the case by calculating all pairwise comparisons of levels in `fol_class`.
+
+```{r}
+#| label: tbl-fol-comp
+#| tbl-cap: |
+#|   Average Treatment Effect for following class
+avg_comparisons(
+  um_model,
+  variables = list(
+    fol_class = "pairwise"
+  ),
+  type = "link"
+) |> 
+ tt()
+```
+
+There are several kinds of comparisons we can make for both categorical and numeric data.
+
+```{r}
+#| eval: false
+avg_comparisons(
+  um_model,
+  variables = list(
+    # comparison to a reference level
+    gender = "reference",
+
+    # pairwise comparison of all levels
+    fol_class = "pairwise",
+
+    # effect of adding +20 to dob
+    dob = 20,
+
+    # comparing two specific reference values
+    relative_rate = c(2/1, 1/2),
+
+    # comparing the 3rd and 1st quartile
+    total_rate = "iqr"
+  ),
+  type = "link"
+) ->
+ all_comp
+```
+
+```{r}
+#| echo: false
+all_comp <- read_rds("data/all_comp.rds")
+```
+
+```{r}
+#| label: tbl-all-ate
+#| tbl-cap: |
+#|   Average Marginal Effects
+#| code-fold: true
+#| code-summary: Table code
+
+all_comp |>
+ tt() |>
+ tt_group(i = term) |>
+ subset(select = -term) |>
+ style_tt("~groupi", j = 1, indent = 2, align = 'r') |>
+ style_tt("groupi", align = "l")
+```
+
+@tbl-all-ate doesn't tell the whole story of what's going on in a complex model like this, but it could be a useful (and more legible) format for reporting model effects.
+
+## Using prediction grids
+
+Instead of using the entire original dataset, we might want to get (average) predicted outcomes at *specific* values across predictors.
+That's where `marginaleffects::datagrid()` comes in.
+Passing our model to `datagrid()` gives us back a 1 row data frame with a column for every predictor in the model, and the values are either the average or most common value of that predictor.
+
+```{r}
+datagrid(
+  model = um_model
+) |>
+ tt()
+```
+
+We can manually set some values in the datagrid by passing them as arguments.
+
+```{r}
+datagrid(
+  model = um_model,
+  relative_rate = 1,
+  gender = c("man", "woman")
+) |>
+ tt()
+```
+
+We can also provide a function that when applied to the original data columns returns values for the datagrid.
+For categorical variables `unique` is a good option.
+
+```{r}
+datagrid(
+  model = um_model,
+  fol_class = unique
+) |> 
+ tt()
+```
+
+Here's a parameterized function to return `n` evenly spaced quantiles for a continuous variable.
+
+```{r}
+n_quantiles <- function(n){
+  function(x){
+    quantile(x, probs = ppoints(n))
+  }
+}
+```
+
+```{r}
+datagrid(
+  model = um_model,
+  total_rate = n_quantiles(3)
+) |>
+ tt()
+```
+
+Using prediction grids this way is what I would recommend for getting most prediction and slope estimates, especially for non-linear models.
+
+## Getting expected predictions and slopes
+
+We can get the "expected" predictions from the model by setting up a representative prediction grid.
+We'll start with a focus on the language change in progress.
+
+```{r}
+dob_gender_grid <-  datagrid(
+  model = um_model,
+  gender = unique,
+  dob = 1900:1990,
+  total_rate = 5.3,
+  relative_rate = 1,
+  fol_class = "pause"
+)
+```
+
+When we use this prediction grid, we'll want to set `re_formula = NA`.
+This is a brms specific argument that sets the random effects to 0 when getting our predictions.
+We want to do this because the `speaker` variable is set to the value of the speaker with the most data.
+They're not necessarily a representative speaker, so we don't want to include the random intercepts and slopes when estimating the predictions.
+
+```{r}
+um_model |>
+ predictions(
+   newdata = dob_gender_grid,
+   re_formula = NA
+ ) ->
+ dob_gender_pred
+```
+
+```{r}
+#| label: fig-change
+#| fig-cap: Estimated "um" probability by date of birth and gender
+#| code-fold: true
+#| code-summary: Plotting code
+dob_gender_pred |>
+ ggplot(
+   aes(dob, estimate, color = gender)
+ ) +
+ geom_lineribbon(
+   aes(ymin = conf.low, ymax = conf.high),
+   alpha = 0.8
+ ) +
+ ylim(0,1) +
+ theme_sub_legend(
+   position = "inside",
+   position.inside = c(0.2, 0.5)
+ )
+```
+
+One of the questions we had was whether the rate of change was the same for men and women.
+We can get estimated slopes over year of birth with the `slopes()` and `avg_slopes()` functions.
+This next table is telling us what the average effect of 1 year of dob is on the log-odds of "um".
+
+```{r}
+#| label: tbl-slope1
+#| tbl-cap: Average expected slope over date of birth
+avg_slopes(
+  um_model,
+  variables = "dob",
+  newdata = dob_gender_grid,
+  type = "link",
+  re_formula = NA
+) |>
+ tt()
+```
+
+We can also break this out by gender.
+
+```{r}
+#| label: tbl-slope2
+#| tbl-cap: Average expected slope over date of birth, by gender
+avg_slopes(
+  um_model,
+  variables = "dob",
+  by = "gender",
+  newdata = dob_gender_grid,
+  type = "link",
+  re_formula = NA
+) ->
+ dob_by_gender
+
+dob_by_gender |> 
+ tt()
+```
+
+The estimated slope for men is slightly steeper than for women.
+Another way to explore this is to look at how much the difference between men and women has changed over dob.
+
+```{r}
+avg_slopes(
+  um_model,
+  variables = "gender",
+  by = "dob",
+  newdata = dob_gender_grid,
+  type = "link",
+  re_formula = NA
+) ->
+ gender_by_dob
+```
+
+```{r}
+#| label: fig-gender-slope
+#| fig-cap: |
+#|   Estimated gender effect over DOB
+#| code-fold: true
+#| code-summary: Plotting code.
+gender_by_dob |>
+ ggplot(
+   aes(dob, estimate)
+ ) +
+ geom_hline(
+   yintercept = 0,
+   linewidth = 0.5
+ ) +
+ geom_lineribbon(
+   aes(ymin = conf.low, ymax = conf.high),
+   alpha = 0.8
+ )
+```
+
+::: {.callout-note collapse="true"}
+## Aside
+
+It's not straightforward from looking at just the estimated slopes by gender in @tbl-slope1 to tell whether the slopes are reliably different.
+However, because we fit the model with brms, we can extract the posterior draws from the marginal effects object, and carry out some additional estimation.
+
+```{r}
+dob_by_gender |> 
+ posterior_draws() |>
+ arrange(gender) |>
+ summarise(
+   .by = drawid,
+   interaction = diff(draw)
+ ) |>
+ mean_hdci(interaction) |> 
+ tt()
+```
+
+The interaction effect doesn't seem that reliable.
+:::
+
+Now, let's turn to speech rate effects.
+At a first pass, we'll get just the predicted log-odds of "um" over relative speech rate.
+For this, I'll set up a relatively balanced prediction grid across all predictors.
+I'm making the spread of values across the numeric predictors a little less dense to speed up computation.
+
+```{r}
+rate_grid <- datagrid(
+    model = um_model,
+    relative_rate = seq(1/3, 3/1, length = 10),
+    total_rate = n_quantiles(10),
+    gender = unique,
+    fol_class = unique,
+    dob = seq(1900, 1990, length = 10)
+  )
+```
+
+Now, I'll get the average predicted "um" probability across `relative_rate`.
+
+```{r}
+avg_predictions(
+  um_model,
+  newdata = rate_grid,
+  by = c("relative_rate"),
+  re_formula = NA
+) -> 
+rate_pred
+```
+
+```{r}
+#| label: fig-rate-pred
+#| fig-cap: |
+#|   Expected 'um' probability by `relative_rate`, 
+#|   marginalizing over all other predictors
+#| code-fold: true
+#| code-summary: Plotting code
+rate_pred |> 
+ ggplot(
+   aes(relative_rate, estimate)
+ ) + 
+ geom_lineribbon(
+   aes(ymin = conf.low, ymax = conf.high)
+ ) +
+ scale_x_log10() +
+ ylim(0,1)
+```
+
+We can break down the these predictions by another hesitation indicator: the following segment
+
+```{r}
+avg_predictions(
+  um_model,
+  newdata = rate_grid,
+  by = c("relative_rate", "fol_class"),
+  re_formula = NA
+) -> 
+ rate_by_fol
+```
+
+```{r}
+#| label: fig-rate-fol-pred
+#| fig-cap: |
+#|   Expected 'um' probability by `relative_rate`, 
+#|   and `fol_class`,
+#|   marginalizing over all other predictors
+#| code-fold: true
+#| code-summary: Plotting code
+rate_by_fol |>
+ ggplot(
+   aes(relative_rate, estimate, color = fol_class)
+ ) +
+ geom_lineribbon(
+   aes(ymin = conf.low, ymax = conf.high),
+   alpha = 0.6
+ ) +
+ geom_line(
+   linewidth = 1.5
+ ) +
+ ylim(0, 1) +
+ scale_x_log10() +
+ theme_sub_legend(
+   position = "inside",
+   position.inside = c(0.85, 0.5)
+ )
+```
+
+One of the questions I'd asked above is whether the effect of relative speech rate is affected by how baseline fast or slow a speaker is.
+We can explore that here with `avg_slopes()`.
+Because `relative_rate` is a ratio, I'll set `slope = "dyex"`.
+This means the estimated slopes will describe how the log-odds of "um" changes as `relative_rate` increases by 100% (instead of +1).
+
+```{r}
+avg_slopes(
+  um_model,
+  newdata = rate_grid,
+  variables = "relative_rate",
+  by = "total_rate",
+  slope = "dyex",
+  type = "link",
+  re_formula = NA
+) ->
+ rate_by_total_slope
+```
+
+```{r}
+#| label: fig-rate-total
+#| fig-cap: |
+#|   Estimated slope of `relative_rate` by `total_rate`
+#| code-fold: true
+#| code-summary: Plotting code.
+
+rate_by_total_slope |>
+ ggplot(
+   aes(total_rate, estimate)
+ ) + 
+ geom_lineribbon(
+   aes(
+     ymin = conf.low,
+     ymax = conf.high
+   )
+ ) +
+ scale_x_log10() +
+ labs(
+   y = "relative rate slope"
+ )
+```
+
+It doesn't seem like someone being an overall slower or faster talker interacts with the effect of relative speech rate.
+
+Another thing to ask is whether the effect of relative speech rate has been affected by the language change!
+To look at this, we'll get the average slope of `relative_rate`, grouped by date of birth and gender.
+
+```{r}
+avg_slopes(
+  um_model,
+  newdata = rate_grid,
+  variables = "relative_rate",
+  by = c("dob", "gender"),
+  slope = "dyex",
+  type = "link",
+  re_formula = NA
+) ->
+ rate_by_change_slope
+```
+
+```{r}
+#| label: fig-rate-change
+#| fig-cap: |
+#|   Estimated slope of `relative_rate` by `dob` and `gender`
+#| code-fold: true
+#| code-summary: Plotting code.
+
+rate_by_change_slope |>
+ ggplot(
+   aes(dob, estimate, color = gender)
+ ) + 
+ geom_hline(
+   yintercept = 0
+ ) +
+ geom_lineribbon(
+   aes(ymin = conf.low, ymax = conf.high),
+   alpha = 0.6
+ ) +
+ geom_line(
+   linewidth = 1.5
+ ) +
+ theme_sub_legend(
+   position = "inside", 
+   position.inside = c(0.5, 0.9),
+   direction = "horizontal"
+ )
+```
+
+The result is a bit unexpected: It looks like the effect of relative speech rate has been growing stronger for women, and was never all that reliable for men.
+
+# More kinds of models
+
+As I said above, while I used `{brms}` to fit the model for this tutorial, the functions covered here would work in just the same way for many other kinds of models.
+
+```{r}
+flat_um_model <- glm(
+  um ~ I(dob-1943) * gender * fol_class *
+   I(log(total_rate/5.3)) *
+   I(log(relative_rate)),
+  data = to_mod,
+  family = binomial
+)
+```
+
+```{r}
+flat_um_model |>
+ predictions(
+   newdata = datagrid(
+     dob = 1900:1990,
+     gender = unique,
+     fol_class = "pause",
+     relative_rate = 1
+   )
+ ) |>
+ ggplot(
+   aes(dob, estimate, color = gender)
+ ) + 
+   geom_lineribbon(
+     aes(ymin = conf.low, ymax = conf.high),
+     alpha = 0.8
+   )+
+   ylim(0,1)
+```
+
+They also work well for non-linear smooths.
+
+```{r}
+non_linear <- brm(
+  um ~ gender + s(I(dob-1943), by = gender) + (1|speaker),
+  data = to_mod,
+  family = bernoulli(),
+  backend = "cmdstanr",
+  cores = 4,
+  file = "models/non_linear"
+)
+```
+
+```{r}
+non_linear |>
+ predictions(
+   newdata = datagrid(
+     dob = 1900:1990,
+     gender = unique
+   ),
+   re_formula = NA
+ ) |>
+ ggplot(
+   aes(dob, estimate, color = gender)
+ ) + 
+   geom_lineribbon(
+     aes(ymin = conf.low, ymax = conf.high),
+     alpha = 0.8
+   )+
+   ylim(0,1)
+```
+
+We can even get a difference curve
+
+```{r}
+non_linear |>
+ slopes(
+   newdata = datagrid(
+     dob = 1900:1990,
+     gender = unique
+   ),
+   variables = "gender",
+   by = "dob",
+   type = "link",
+   re_formula = NA
+ ) |>
+ ggplot(
+   aes(dob, estimate)
+ ) +
+   geom_hline(yintercept = 0, linewidth = 0.5)+
+   geom_lineribbon(
+     aes(ymin = conf.low, ymax = conf.high),
+     alpha = 0.8
+   )
+```
+
+# Further reading
+
+I can't cover everything worth knowing about the marginaleffects package in a single tutorial.
+For further reading I would recommend:
+
+-   [The marginal effects webpage](https://marginaleffects.com/) [@arel-bundock2025]
+
+-   These blog posts by Andrew Heiss:
+
+    -   [Marginalia](https://www.andrewheiss.com/blog/2022/05/20/marginalia/) [@heiss]
+
+    -   [Marginal and conditional effects for GLMMs with {marginaleffects}](https://www.andrewheiss.com/blog/2022/11/29/conditional-marginal-marginaleffects/) [@heiss2022]
