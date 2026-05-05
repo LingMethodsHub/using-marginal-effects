@@ -1,10 +1,5 @@
 ---
 title: "Using {marginaleffects}"
-author: 
-  - name: "Josef Fruehwald"
-    url: "https://jofrhwld.github.io"
-    affiliations:
-      - University of Kentucky
 date: 2026-05-04
 license: "CC-BY-SA 4.0"
 resource-path: 
@@ -13,7 +8,7 @@ resource-path:
 format: 
   html:
     code-link: true
-  #typst: default
+  typst: default
 editor: visual
 fig-width: 5
 fig-height: 3
@@ -22,6 +17,9 @@ knitr:
     echo: true
     message: false
 bibliography: references.bib
+description: |
+  This is a tutorial about how to use the {marginaleffects} package to 
+  extract and plot predictions of interest from a statistical model.
 ---
 
 ::: {.callout-note .column-margin}
