@@ -8,7 +8,7 @@ resource-path:
 format: 
   html:
     code-link: true
-  typst: default
+  # typst: default
 editor: visual
 fig-width: 5
 fig-height: 3
