@@ -1,5 +1,5 @@
 ---
-title: "Using {marginaleffects} to understand statistical models"
+title: "Using {marginaleffects} to understand statistical models."
 date: 2026-05-04
 license: "CC-BY-SA 4.0"
 resource-path: 
