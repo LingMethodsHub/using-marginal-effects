@@ -692,16 +692,23 @@ Looking back at the average predictions across `fol_class`, it looked like if th
 We can double check if this is the case by calculating all pairwise comparisons of levels in `fol_class`.
 
 ```{r}
-#| label: tbl-fol-comp
-#| tbl-cap: |
-#|   Average Treatment Effect for following class
+#| eval: false
 avg_comparisons(
   um_model,
   variables = list(
     fol_class = "pairwise"
   ),
   type = "link"
-) |> 
+) |>
+ tt()
+```
+
+```{r}
+#| label: tbl-fol-comp
+#| tbl-cap: |
+#|   Average Treatment Effect for following class
+fol_comp <- read_rds("data/fol_comp.rds")
+fol_comp |> 
  tt()
 ```
 
