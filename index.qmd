@@ -704,6 +704,7 @@ avg_comparisons(
 ```
 
 ```{r}
+#| echo: false
 #| label: tbl-fol-comp
 #| tbl-cap: |
 #|   Average Treatment Effect for following class
