@@ -28,8 +28,8 @@ description: |
 [data/um_data.csv](data/um_data.csv) (4.7Mb)
 :::
 
-The purpose of this tutorial is to introduce use of the `{marginaleffects}` package using linguistic data.
-The use of linguistic data is the distinctive aspect of this tutorial, which otherwise partially replicates the tutorials available by the author `{marginaleffects}` and collaborators [@arel-bundock2024; @arel-bundock2025; @arel-bundock2026].
+The purpose of this tutorial is to introduce use of the `{marginaleffects}` package with linguistic data.
+The use of linguistic data is the distinctive aspect of this tutorial, which otherwise partially replicates the tutorials available by the author of `{marginaleffects}` and collaborators [@arel-bundock2024; @arel-bundock2025; @arel-bundock2026].
 I highly recommend referring to these materials as well, especially the book and reference manual at [https://marginaleffects.com](https://marginaleffects.com/).
 
 While the use of `{marginaleffects}` is often discussed within the framework of Causal Inference, it is very useful for extracting predictions and comparisons from statistical models even if you're not operating within that framework.
@@ -93,7 +93,7 @@ um |>
  )
 ```
 
-Every row corresponds to either an "um" or an "un".
+Every row corresponds to either an "um" or an "uh".
 The data columns that may not be obvious from the names are:
 
 -   `local_*`: quantities estimated based on a 1 second window around each filled pause
@@ -118,7 +118,7 @@ The data columns that may not be obvious from the names are:
 
 ## Descriptive stats
 
-@clark2002 argue that filled pauses are useful signals to a listener that a speaker is working harder for lexical access, and that "um" is a signal of greater effort than "um".
+@clark2002 argue that filled pauses are useful signals to a listener that a speaker is working harder for lexical access, and that "um" is a signal of greater effort than "uh".
 As such, other indicators of greater effort in lexical access should be predictive of "um" usage, such as whether or not there is a silent pause following, and slowdowns in local speech rate.
 
 @fig-rate plots "um" usage against the relative speech rate (how much faster/slower the local speech rate around the filled pause is relative to the speaker's overall speech rate) and whether or not the following segment was a silent pause.
